@@ -469,7 +469,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(wireless)
 
         kill = QAction("⏹ adb kill-server", self)
-        kill.triggered.connect(lambda: self._async("kill-server", lambda: run_adb("kill-server")))
+        kill.triggered.connect(lambda: self._async("kill-server", lambda: run_adb("kill-server"), lambda r: None))
         toolbar.addAction(kill)
 
         tabs = QTabWidget()
@@ -1165,6 +1165,11 @@ class MainWindow(QMainWindow):
     # ---- Device discovery -------------------------------------------------
 
     def refresh_devices(self):
+        if not adb_exists():
+            self._update_devices([])
+            self.status.showMessage("⚠ ADB не установлен — открой вкладку Настройки", 5000)
+            return
+
         def work() -> str:
             return run_adb("devices -l")
 
@@ -1326,11 +1331,35 @@ class MainWindow(QMainWindow):
         if adb_exists():
             return
         if QMessageBox.question(
-            self,
-            "ADB не найден",
-            "ADB не установлен. Скачать platform-tools автоматически?",
-        ) == QMessageBox.StandardButton.Yes:
-            self._install_adb()
+                self,
+                "ADB не найден",
+                "ADB не установлен. Скачать platform-tools автоматически?",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        system = platform.system()
+        url = ADB_URLS.get(system)
+        if not url:
+            QMessageBox.warning(self, "ADB", f"Платформа {system} не поддерживается автоустановкой.")
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            os.makedirs(ADB_DIR, exist_ok=True)
+            zip_path = os.path.join(ADB_DIR, "adb.zip")
+            urllib.request.urlretrieve(url, zip_path)
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(ADB_DIR)
+            os.remove(zip_path)
+            if not IS_WINDOWS:
+                bin_path = os.path.join(ADB_DIR, "platform-tools", "adb")
+                if os.path.exists(bin_path):
+                    os.chmod(bin_path, 0o755)
+            QMessageBox.information(self, "ADB", "✅ platform-tools установлены")
+        except Exception as e:
+            QMessageBox.critical(self, "ADB", f"❌ Ошибка установки: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def closeEvent(self, event):
         self._stop_logcat()
